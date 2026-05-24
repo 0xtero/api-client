@@ -4,6 +4,7 @@ from typing import Any
 
 import httpx
 
+from apiclient.http.auth import merge_headers, prepare_auth, validate_auth
 from apiclient.models.request import BodyMode, HttpRequest, HttpResponse
 
 
@@ -22,7 +23,17 @@ class HttpExecutor:
 
     def send(self, request: HttpRequest, timeout: float | None = None) -> HttpResponse:
         timeout = timeout if timeout is not None else self.DEFAULT_TIMEOUT
-        headers = {k: v for k, v in request.headers.items() if k.strip()}
+
+        auth_error = validate_auth(request.auth)
+        if auth_error:
+            return HttpResponse(
+                status_code=0,
+                reason="Invalid auth",
+                error=auth_error,
+            )
+
+        prepared = prepare_auth(request.auth)
+        headers = merge_headers(request.headers, prepared)
         content: str | None = None
         json_body: Any | None = None
 
@@ -45,6 +56,8 @@ class HttpExecutor:
                     method=request.method,
                     url=request.url,
                     headers=headers,
+                    params=prepared.params or None,
+                    auth=prepared.httpx_auth,
                     json=json_body,
                     content=content,
                 )

@@ -17,8 +17,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from apiclient.http.auth import validate_auth
 from apiclient.models.project import FolderItem, RequestRef
-from apiclient.models.request import HttpRequest, HttpResponse
+from apiclient.models.request import HttpResponse
 from apiclient.storage.project_storage import ProjectSession, ProjectStorage, ProjectStorageError
 from apiclient.ui.request_editor import RequestEditor
 from apiclient.ui.response_viewer import ResponseViewer
@@ -282,6 +283,11 @@ class MainWindow(QMainWindow):
         request = self.request_editor.to_request(self._current_request_name())
         if not request.url.strip():
             QMessageBox.warning(self, "Send Request", "URL is required.")
+            return
+
+        auth_error = validate_auth(request.auth)
+        if auth_error:
+            QMessageBox.warning(self, "Send Request", auth_error)
             return
 
         if self._session and self._current_file and self._dirty:

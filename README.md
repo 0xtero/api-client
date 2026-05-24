@@ -16,6 +16,7 @@ Cross-platform desktop client for building and sending HTTP requests. Projects a
 | HTTP methods | GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS |
 | Request body | none, JSON, or raw text |
 | Headers | Key/value table editor |
+| Authentication | Bearer, Basic, API key (header or query) |
 | Collections | Nested folders; add, rename, delete |
 | Stack | Python 3.11+, PySide6, httpx |
 
@@ -61,7 +62,8 @@ A request file looks like this:
   "method": "GET",
   "url": "https://api.example.com/users",
   "headers": {"Accept": "application/json"},
-  "body": {"mode": "none", "content": ""}
+  "body": {"mode": "none", "content": ""},
+  "auth": {"type": "none"}
 }
 ```
 

@@ -1,11 +1,14 @@
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QComboBox,
+    QFormLayout,
     QHBoxLayout,
     QHeaderView,
+    QLabel,
     QLineEdit,
     QPlainTextEdit,
     QPushButton,
+    QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
@@ -13,9 +16,19 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from apiclient.models.request import BodyMode, HttpRequest
+from apiclient.models.request import ApiKeyIn, AuthType, BodyMode, HttpAuth, HttpRequest
 
 HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
+AUTH_TYPES = [
+    ("None", AuthType.NONE),
+    ("Bearer token", AuthType.BEARER),
+    ("Basic auth", AuthType.BASIC),
+    ("API key", AuthType.API_KEY),
+]
+API_KEY_LOCATIONS = [
+    ("Header", ApiKeyIn.HEADER),
+    ("Query param", ApiKeyIn.QUERY),
+]
 
 
 class RequestEditor(QWidget):
@@ -34,6 +47,62 @@ class RequestEditor(QWidget):
         url_row = QHBoxLayout()
         url_row.addWidget(self.method_combo)
         url_row.addWidget(self.url_input, stretch=1)
+
+        self.auth_type_combo = QComboBox()
+        for label, _auth_type in AUTH_TYPES:
+            self.auth_type_combo.addItem(label)
+
+        self.auth_none_label = QLabel("No authentication configured for this request.")
+        self.auth_none_label.setWordWrap(True)
+
+        self.bearer_token_input = QLineEdit()
+        self.bearer_token_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.bearer_token_input.setPlaceholderText("Token")
+
+        bearer_form = QFormLayout()
+        bearer_form.addRow("Token", self.bearer_token_input)
+        bearer_widget = QWidget()
+        bearer_widget.setLayout(bearer_form)
+
+        self.basic_username_input = QLineEdit()
+        self.basic_username_input.setPlaceholderText("Username")
+        self.basic_password_input = QLineEdit()
+        self.basic_password_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.basic_password_input.setPlaceholderText("Password")
+
+        basic_form = QFormLayout()
+        basic_form.addRow("Username", self.basic_username_input)
+        basic_form.addRow("Password", self.basic_password_input)
+        basic_widget = QWidget()
+        basic_widget.setLayout(basic_form)
+
+        self.api_key_name_input = QLineEdit()
+        self.api_key_name_input.setPlaceholderText("X-API-Key")
+        self.api_key_value_input = QLineEdit()
+        self.api_key_value_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.api_key_value_input.setPlaceholderText("Value")
+        self.api_key_in_combo = QComboBox()
+        for label, _location in API_KEY_LOCATIONS:
+            self.api_key_in_combo.addItem(label)
+
+        api_key_form = QFormLayout()
+        api_key_form.addRow("Key name", self.api_key_name_input)
+        api_key_form.addRow("Key value", self.api_key_value_input)
+        api_key_form.addRow("Add to", self.api_key_in_combo)
+        api_key_widget = QWidget()
+        api_key_widget.setLayout(api_key_form)
+
+        self.auth_stack = QStackedWidget()
+        self.auth_stack.addWidget(self.auth_none_label)
+        self.auth_stack.addWidget(bearer_widget)
+        self.auth_stack.addWidget(basic_widget)
+        self.auth_stack.addWidget(api_key_widget)
+
+        auth_layout = QVBoxLayout()
+        auth_layout.addWidget(self.auth_type_combo)
+        auth_layout.addWidget(self.auth_stack)
+        auth_widget = QWidget()
+        auth_widget.setLayout(auth_layout)
 
         self.headers_table = QTableWidget(0, 2)
         self.headers_table.setHorizontalHeaderLabels(["Header", "Value"])
@@ -68,6 +137,7 @@ class RequestEditor(QWidget):
         body_layout.addWidget(self.body_editor)
 
         self.tabs = QTabWidget()
+        self.tabs.addTab(auth_widget, "Auth")
         self.tabs.addTab(headers_widget, "Headers")
         self.tabs.addTab(body_widget, "Body")
 
@@ -77,11 +147,19 @@ class RequestEditor(QWidget):
 
         self.method_combo.currentTextChanged.connect(self._emit_changed)
         self.url_input.textChanged.connect(self._emit_changed)
+        self.auth_type_combo.currentIndexChanged.connect(self._on_auth_type_changed)
+        self.bearer_token_input.textChanged.connect(self._emit_changed)
+        self.basic_username_input.textChanged.connect(self._emit_changed)
+        self.basic_password_input.textChanged.connect(self._emit_changed)
+        self.api_key_name_input.textChanged.connect(self._emit_changed)
+        self.api_key_value_input.textChanged.connect(self._emit_changed)
+        self.api_key_in_combo.currentIndexChanged.connect(self._emit_changed)
         self.body_mode_combo.currentTextChanged.connect(self._on_body_mode_changed)
         self.body_editor.textChanged.connect(self._emit_changed)
         self.headers_table.itemChanged.connect(self._emit_changed)
 
         self._on_body_mode_changed(self.body_mode_combo.currentText())
+        self._on_auth_type_changed(self.auth_type_combo.currentIndex())
 
     def load_request(self, request: HttpRequest) -> None:
         self._loading = True
@@ -91,6 +169,7 @@ class RequestEditor(QWidget):
             self.body_mode_combo.setCurrentText(request.body.mode.value)
             self.body_editor.setPlainText(request.body.content)
             self._set_headers(request.headers)
+            self._set_auth(request.auth)
             self._on_body_mode_changed(request.body.mode.value)
         finally:
             self._loading = False
@@ -104,6 +183,7 @@ class RequestEditor(QWidget):
             url=self.url_input.text().strip(),
             headers=headers,
             body={"mode": mode, "content": self.body_editor.toPlainText()},
+            auth=self._collect_auth(),
         )
 
     def _emit_changed(self, *_args: object) -> None:
@@ -114,6 +194,41 @@ class RequestEditor(QWidget):
         enabled = mode != BodyMode.NONE.value
         self.body_editor.setEnabled(enabled)
         self._emit_changed()
+
+    def _on_auth_type_changed(self, index: int) -> None:
+        self.auth_stack.setCurrentIndex(index)
+        self._emit_changed()
+
+    def _set_auth(self, auth: HttpAuth) -> None:
+        type_index = next(
+            (i for i, (_, auth_type) in enumerate(AUTH_TYPES) if auth_type == auth.type),
+            0,
+        )
+        self.auth_type_combo.setCurrentIndex(type_index)
+        self.bearer_token_input.setText(auth.token)
+        self.basic_username_input.setText(auth.username)
+        self.basic_password_input.setText(auth.password)
+        self.api_key_name_input.setText(auth.key_name)
+        self.api_key_value_input.setText(auth.key_value)
+        key_in_index = next(
+            (i for i, (_, location) in enumerate(API_KEY_LOCATIONS) if location == auth.key_in),
+            0,
+        )
+        self.api_key_in_combo.setCurrentIndex(key_in_index)
+        self.auth_stack.setCurrentIndex(type_index)
+
+    def _collect_auth(self) -> HttpAuth:
+        auth_type = AUTH_TYPES[self.auth_type_combo.currentIndex()][1]
+        key_in = API_KEY_LOCATIONS[self.api_key_in_combo.currentIndex()][1]
+        return HttpAuth(
+            type=auth_type,
+            token=self.bearer_token_input.text(),
+            username=self.basic_username_input.text(),
+            password=self.basic_password_input.text(),
+            key_name=self.api_key_name_input.text(),
+            key_value=self.api_key_value_input.text(),
+            key_in=key_in,
+        )
 
     def _set_headers(self, headers: dict[str, str]) -> None:
         self.headers_table.blockSignals(True)
