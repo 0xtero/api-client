@@ -17,6 +17,30 @@ class HttpBody(BaseModel):
     content: str = ""
 
 
+class AuthType(StrEnum):
+    NONE = "none"
+    BEARER = "bearer"
+    BASIC = "basic"
+    API_KEY = "api_key"
+
+
+class ApiKeyIn(StrEnum):
+    HEADER = "header"
+    QUERY = "query"
+
+
+class HttpAuth(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    type: AuthType = AuthType.NONE
+    token: str = ""
+    username: str = ""
+    password: str = ""
+    key_name: str = ""
+    key_value: str = ""
+    key_in: ApiKeyIn = ApiKeyIn.HEADER
+
+
 class HttpRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -25,6 +49,7 @@ class HttpRequest(BaseModel):
     url: str = ""
     headers: dict[str, str] = Field(default_factory=dict)
     body: HttpBody = Field(default_factory=HttpBody)
+    auth: HttpAuth = Field(default_factory=HttpAuth)
 
 
 class HttpResponse(BaseModel):
