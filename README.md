@@ -20,10 +20,11 @@ Cross-platform desktop client for building and sending HTTP requests. Projects a
 | Authentication | Bearer, Basic, API key (header or query) |
 | Request settings | Redirects, timeout, max redirects, URL encoding |
 | cURL | Copy as cURL and import from cURL |
+| Responses | Status class, headers, formatted body, elapsed time |
 | Collections | Nested folders; add, rename, delete |
 | Stack | Python 3.11+, PySide6, httpx |
 
-MVP today: create and open projects, organize requests in folders, send calls, read responses. The `environments/` directory is reserved for variables — not wired into the UI yet.
+Projects are folders of JSON on disk. Create requests, send them, inspect responses. The `environments/` directory is reserved for variables — not wired into the UI yet.
 
 ## Quick start
 
@@ -63,12 +64,17 @@ A request file looks like this:
 {
   "name": "List users",
   "method": "GET",
-  "url": "https://api.example.com/users",
-  "headers": {"Accept": "application/json"},
-  "body": {"mode": "none", "content": ""},
-  "auth": {"type": "none"}
+  "url": "https://api.example.com/users/:userId",
+  "path_params": [{"name": "userId", "value": "42", "enabled": true}],
+  "query_params": [{"name": "include", "value": "orders", "enabled": true}],
+  "headers": [{"name": "Accept", "value": "application/json", "enabled": true}],
+  "body": {"mode": "none", "content": "", "form_fields": [], "multipart_fields": []},
+  "auth": {"type": "none"},
+  "settings": {"follow_redirects": true, "max_redirects": 5, "timeout_ms": 30000, "encode_url": true}
 }
 ```
+
+Legacy request files with `"headers": {"Accept": "..."}` still load; they are saved in the list format above.
 
 `collection.json` holds the folder tree; individual requests stay in separate files so diffs stay small.
 
