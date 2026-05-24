@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from apiclient.models.request import BodyMode, HttpRequest
+from apiclient.models.request import AuthType, BodyMode, HttpAuth, HttpRequest
 from apiclient.storage.project_storage import ProjectStorage, ProjectStorageError, slugify
 
 
@@ -68,3 +68,24 @@ def test_body_modes_serialize(tmp_path: Path) -> None:
     loaded = storage.load_request(storage.open(tmp_path / "demo"), ref.file)
     assert loaded.body.mode == BodyMode.JSON
     assert loaded.body.content == '{"ok": true}'
+
+
+def test_auth_field_round_trip(tmp_path: Path) -> None:
+    storage = ProjectStorage()
+    session = storage.create(tmp_path / "demo", "Demo")
+    ref = storage.add_request(
+        session,
+        session.collection.items,
+        "Secure",
+        HttpRequest(
+            name="Secure",
+            method="GET",
+            url="https://example.com",
+            auth=HttpAuth(type=AuthType.BEARER, token="secret"),
+        ),
+    )
+    storage.save(session)
+
+    loaded = storage.load_request(storage.open(tmp_path / "demo"), ref.file)
+    assert loaded.auth.type == AuthType.BEARER
+    assert loaded.auth.token == "secret"

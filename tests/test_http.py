@@ -1,9 +1,7 @@
 import json
 
-import pytest
-
 from apiclient.http.executor import HttpExecutor, format_body_text
-from apiclient.models.request import BodyMode, HttpRequest
+from apiclient.models.request import AuthType, BodyMode, HttpAuth, HttpRequest
 
 
 def test_format_body_text_json() -> None:
@@ -38,3 +36,27 @@ def test_network_error() -> None:
     response = executor.send(request, timeout=1.0)
     assert response.status_code == 0
     assert response.error is not None
+
+
+def test_send_basic_auth_httpbin() -> None:
+    executor = HttpExecutor()
+    request = HttpRequest(
+        method="GET",
+        url="https://httpbin.org/basic-auth/user/passwd",
+        auth=HttpAuth(type=AuthType.BASIC, username="user", password="passwd"),
+    )
+    response = executor.send(request, timeout=20.0)
+    assert response.error is None
+    assert response.status_code == 200
+
+
+def test_invalid_auth_returns_error() -> None:
+    executor = HttpExecutor()
+    request = HttpRequest(
+        method="GET",
+        url="https://httpbin.org/get",
+        auth=HttpAuth(type=AuthType.BEARER, token=""),
+    )
+    response = executor.send(request)
+    assert response.status_code == 0
+    assert response.error == "Bearer token is required."
