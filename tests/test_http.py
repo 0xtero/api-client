@@ -1,7 +1,7 @@
 import json
 
 from apiclient.http.executor import HttpExecutor, format_body_text
-from apiclient.models.request import AuthType, BodyMode, HttpAuth, HttpRequest
+from apiclient.models.request import AuthType, BodyMode, HttpAuth, HttpRequest, KeyValueEntry
 
 
 def test_format_body_text_json() -> None:
@@ -60,3 +60,20 @@ def test_invalid_auth_returns_error() -> None:
     response = executor.send(request)
     assert response.status_code == 0
     assert response.error == "Bearer token is required."
+
+
+def test_disabled_headers_not_sent() -> None:
+    executor = HttpExecutor()
+    request = HttpRequest(
+        method="GET",
+        url="https://httpbin.org/headers",
+        headers=[
+            KeyValueEntry(name="X-Sent", value="yes", enabled=True),
+            KeyValueEntry(name="X-Hidden", value="no", enabled=False),
+        ],
+    )
+    response = executor.send(request, timeout=20.0)
+    assert response.error is None
+    assert response.status_code == 200
+    assert "X-Sent" in response.body
+    assert "X-Hidden" not in response.body
