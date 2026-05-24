@@ -6,7 +6,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QPlainTextEdit,
     QSpinBox,
     QStackedWidget,
     QTabWidget,
@@ -18,12 +17,12 @@ from apiclient.http.url_builder import extract_path_param_names
 from apiclient.models.request import (
     ApiKeyIn,
     AuthType,
-    BodyMode,
     HttpAuth,
     HttpRequest,
     HttpRequestSettings,
     KeyValueEntry,
 )
+from apiclient.ui.body_editor import BodyEditor
 from apiclient.ui.key_value_table import KeyValueTableWidget
 
 HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
@@ -139,16 +138,11 @@ class RequestEditor(QWidget):
         headers_layout.setContentsMargins(0, 0, 0, 0)
         headers_layout.addWidget(self.headers_table)
 
-        self.body_mode_combo = QComboBox()
-        self.body_mode_combo.addItems(["none", "json", "text"])
-
-        self.body_editor = QPlainTextEdit()
-        self.body_editor.setPlaceholderText("Request body")
+        self.body_editor = BodyEditor()
 
         body_widget = QWidget()
         body_layout = QVBoxLayout(body_widget)
         body_layout.setContentsMargins(0, 0, 0, 0)
-        body_layout.addWidget(self.body_mode_combo)
         body_layout.addWidget(self.body_editor)
 
         self.follow_redirects_check = QCheckBox("Automatically follow redirects")
@@ -192,8 +186,7 @@ class RequestEditor(QWidget):
         self.api_key_name_input.textChanged.connect(self._emit_changed)
         self.api_key_value_input.textChanged.connect(self._emit_changed)
         self.api_key_in_combo.currentIndexChanged.connect(self._emit_changed)
-        self.body_mode_combo.currentTextChanged.connect(self._on_body_mode_changed)
-        self.body_editor.textChanged.connect(self._emit_changed)
+        self.body_editor.changed.connect(self._emit_changed)
         self.headers_table.changed.connect(self._emit_changed)
         self.query_params_table.changed.connect(self._emit_changed)
         self.path_params_table.changed.connect(self._emit_changed)
@@ -202,7 +195,6 @@ class RequestEditor(QWidget):
         self.timeout_spin.valueChanged.connect(self._emit_changed)
         self.encode_url_check.toggled.connect(self._emit_changed)
 
-        self._on_body_mode_changed(self.body_mode_combo.currentText())
         self._on_auth_type_changed(self.auth_type_combo.currentIndex())
 
     def load_request(self, request: HttpRequest) -> None:
@@ -210,19 +202,16 @@ class RequestEditor(QWidget):
         try:
             self.method_combo.setCurrentText(request.method)
             self.url_input.setText(request.url)
-            self.body_mode_combo.setCurrentText(request.body.mode.value)
-            self.body_editor.setPlainText(request.body.content)
+            self.body_editor.load_body(request.body)
             self._set_headers(request.headers)
             self.query_params_table.load_entries(request.query_params)
             self.path_params_table.load_entries(request.path_params)
             self._set_settings(request.settings)
             self._set_auth(request.auth)
-            self._on_body_mode_changed(request.body.mode.value)
         finally:
             self._loading = False
 
     def to_request(self, name: str) -> HttpRequest:
-        mode = BodyMode(self.body_mode_combo.currentText())
         return HttpRequest(
             name=name,
             method=self.method_combo.currentText(),
@@ -230,7 +219,7 @@ class RequestEditor(QWidget):
             headers=self.headers_table.collect_entries(),
             query_params=self.query_params_table.collect_entries(),
             path_params=self.path_params_table.collect_entries(),
-            body={"mode": mode, "content": self.body_editor.toPlainText()},
+            body=self.body_editor.collect_body(),
             auth=self._collect_auth(),
             settings=self._collect_settings(),
         )
@@ -256,11 +245,6 @@ class RequestEditor(QWidget):
     def _emit_changed(self, *_args: object) -> None:
         if not self._loading:
             self.changed.emit()
-
-    def _on_body_mode_changed(self, mode: str) -> None:
-        enabled = mode != BodyMode.NONE.value
-        self.body_editor.setEnabled(enabled)
-        self._emit_changed()
 
     def _on_auth_type_changed(self, index: int) -> None:
         self.auth_stack.setCurrentIndex(index)
