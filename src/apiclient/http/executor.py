@@ -5,6 +5,8 @@ from typing import Any
 import httpx
 
 from apiclient.http.auth import merge_headers, prepare_auth, validate_auth
+from apiclient.http.url_builder import apply_query_to_url, merge_query_params, substitute_path_params
+from apiclient.models.compat import entries_to_dict
 from apiclient.models.request import BodyMode, HttpRequest, HttpResponse
 
 
@@ -22,7 +24,8 @@ class HttpExecutor:
     DEFAULT_TIMEOUT = 30.0
 
     def send(self, request: HttpRequest, timeout: float | None = None) -> HttpResponse:
-        timeout = timeout if timeout is not None else self.DEFAULT_TIMEOUT
+        settings = request.settings
+        timeout = timeout if timeout is not None else settings.timeout_ms / 1000
 
         auth_error = validate_auth(request.auth)
         if auth_error:
@@ -33,7 +36,10 @@ class HttpExecutor:
             )
 
         prepared = prepare_auth(request.auth)
-        headers = merge_headers(request.headers, prepared)
+        headers = merge_headers(entries_to_dict(request.headers), prepared)
+        params = merge_query_params(request.query_params, prepared.params or None)
+        url = substitute_path_params(request.url.strip(), entries_to_dict(request.path_params))
+        url, httpx_params = apply_query_to_url(url, params, encode=settings.encode_url)
         content: str | None = None
         json_body: Any | None = None
 
@@ -51,12 +57,16 @@ class HttpExecutor:
 
         started = time.perf_counter()
         try:
-            with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+            with httpx.Client(
+                timeout=timeout,
+                follow_redirects=settings.follow_redirects,
+                max_redirects=settings.max_redirects,
+            ) as client:
                 response = client.request(
                     method=request.method,
-                    url=request.url,
+                    url=url,
                     headers=headers,
-                    params=prepared.params or None,
+                    params=httpx_params,
                     auth=prepared.httpx_auth,
                     json=json_body,
                     content=content,
