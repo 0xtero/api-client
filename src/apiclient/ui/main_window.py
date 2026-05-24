@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from apiclient.http.auth import validate_auth
+from apiclient.http.url_builder import validate_path_params
 from apiclient.models.project import FolderItem, RequestRef
 from apiclient.models.request import HttpResponse
 from apiclient.storage.project_storage import ProjectSession, ProjectStorage, ProjectStorageError
@@ -288,6 +289,11 @@ class MainWindow(QMainWindow):
         auth_error = validate_auth(request.auth)
         if auth_error:
             QMessageBox.warning(self, "Send Request", auth_error)
+            return
+
+        path_error = validate_path_params(request.url, request.path_params)
+        if path_error:
+            QMessageBox.warning(self, "Send Request", path_error)
             return
 
         if self._session and self._current_file and self._dirty:
