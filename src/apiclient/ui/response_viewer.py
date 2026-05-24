@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from apiclient.http.status import status_class
 from apiclient.models.request import HttpResponse
 
 
@@ -48,7 +49,8 @@ class ResponseViewer(QWidget):
             return
 
         self.summary_label.setText(
-            f"{response.status_code} {response.reason} · {response.elapsed_ms:.0f} ms"
+            f"{response.status_code} {response.reason} ({status_class(response.status_code)})"
+            f" · {response.elapsed_ms:.0f} ms"
         )
         self._set_headers(response.headers)
         self.body_view.setPlainText(response.body)

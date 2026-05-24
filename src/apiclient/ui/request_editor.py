@@ -1,22 +1,30 @@
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QFormLayout,
     QHBoxLayout,
-    QHeaderView,
     QLabel,
     QLineEdit,
     QPlainTextEdit,
-    QPushButton,
+    QSpinBox,
     QStackedWidget,
-    QTableWidget,
-    QTableWidgetItem,
     QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
-from apiclient.models.request import ApiKeyIn, AuthType, BodyMode, HttpAuth, HttpRequest
+from apiclient.http.url_builder import extract_path_param_names
+from apiclient.models.request import (
+    ApiKeyIn,
+    AuthType,
+    BodyMode,
+    HttpAuth,
+    HttpRequest,
+    HttpRequestSettings,
+    KeyValueEntry,
+)
+from apiclient.ui.key_value_table import KeyValueTableWidget
 
 HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
 AUTH_TYPES = [
@@ -104,25 +112,32 @@ class RequestEditor(QWidget):
         auth_widget = QWidget()
         auth_widget.setLayout(auth_layout)
 
-        self.headers_table = QTableWidget(0, 2)
-        self.headers_table.setHorizontalHeaderLabels(["Header", "Value"])
-        self.headers_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.headers_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.query_params_table = KeyValueTableWidget(
+            name_header="Name",
+            value_header="Value",
+        )
 
-        headers_buttons = QHBoxLayout()
-        add_header_btn = QPushButton("Add header")
-        remove_header_btn = QPushButton("Remove header")
-        add_header_btn.clicked.connect(self._add_header_row)
-        remove_header_btn.clicked.connect(self._remove_header_row)
-        headers_buttons.addWidget(add_header_btn)
-        headers_buttons.addWidget(remove_header_btn)
-        headers_buttons.addStretch()
+        self.path_params_table = KeyValueTableWidget(
+            name_header="Name",
+            value_header="Value",
+        )
+
+        query_widget = QWidget()
+        query_layout = QVBoxLayout(query_widget)
+        query_layout.setContentsMargins(0, 0, 0, 0)
+        path_label = QLabel("Path parameters")
+        query_layout.addWidget(path_label)
+        query_layout.addWidget(self.path_params_table)
+        query_label = QLabel("Query parameters")
+        query_layout.addWidget(query_label)
+        query_layout.addWidget(self.query_params_table)
+
+        self.headers_table = KeyValueTableWidget(name_header="Header", value_header="Value")
 
         headers_widget = QWidget()
         headers_layout = QVBoxLayout(headers_widget)
         headers_layout.setContentsMargins(0, 0, 0, 0)
         headers_layout.addWidget(self.headers_table)
-        headers_layout.addLayout(headers_buttons)
 
         self.body_mode_combo = QComboBox()
         self.body_mode_combo.addItems(["none", "json", "text"])
@@ -136,17 +151,40 @@ class RequestEditor(QWidget):
         body_layout.addWidget(self.body_mode_combo)
         body_layout.addWidget(self.body_editor)
 
+        self.follow_redirects_check = QCheckBox("Automatically follow redirects")
+        self.follow_redirects_check.setChecked(True)
+        self.max_redirects_spin = QSpinBox()
+        self.max_redirects_spin.setRange(1, 50)
+        self.max_redirects_spin.setValue(5)
+        self.timeout_spin = QSpinBox()
+        self.timeout_spin.setRange(1000, 300000)
+        self.timeout_spin.setSingleStep(1000)
+        self.timeout_spin.setSuffix(" ms")
+        self.timeout_spin.setValue(30000)
+        self.encode_url_check = QCheckBox("Encode URL parameters")
+        self.encode_url_check.setChecked(True)
+
+        settings_form = QFormLayout()
+        settings_form.addRow(self.follow_redirects_check)
+        settings_form.addRow("Max redirects", self.max_redirects_spin)
+        settings_form.addRow("Request timeout", self.timeout_spin)
+        settings_form.addRow(self.encode_url_check)
+        settings_widget = QWidget()
+        settings_widget.setLayout(settings_form)
+
         self.tabs = QTabWidget()
         self.tabs.addTab(auth_widget, "Auth")
+        self.tabs.addTab(query_widget, "Params")
         self.tabs.addTab(headers_widget, "Headers")
         self.tabs.addTab(body_widget, "Body")
+        self.tabs.addTab(settings_widget, "Settings")
 
         layout = QVBoxLayout(self)
         layout.addLayout(url_row)
         layout.addWidget(self.tabs)
 
         self.method_combo.currentTextChanged.connect(self._emit_changed)
-        self.url_input.textChanged.connect(self._emit_changed)
+        self.url_input.textChanged.connect(self._on_url_changed)
         self.auth_type_combo.currentIndexChanged.connect(self._on_auth_type_changed)
         self.bearer_token_input.textChanged.connect(self._emit_changed)
         self.basic_username_input.textChanged.connect(self._emit_changed)
@@ -156,7 +194,13 @@ class RequestEditor(QWidget):
         self.api_key_in_combo.currentIndexChanged.connect(self._emit_changed)
         self.body_mode_combo.currentTextChanged.connect(self._on_body_mode_changed)
         self.body_editor.textChanged.connect(self._emit_changed)
-        self.headers_table.itemChanged.connect(self._emit_changed)
+        self.headers_table.changed.connect(self._emit_changed)
+        self.query_params_table.changed.connect(self._emit_changed)
+        self.path_params_table.changed.connect(self._emit_changed)
+        self.follow_redirects_check.toggled.connect(self._emit_changed)
+        self.max_redirects_spin.valueChanged.connect(self._emit_changed)
+        self.timeout_spin.valueChanged.connect(self._emit_changed)
+        self.encode_url_check.toggled.connect(self._emit_changed)
 
         self._on_body_mode_changed(self.body_mode_combo.currentText())
         self._on_auth_type_changed(self.auth_type_combo.currentIndex())
@@ -169,22 +213,45 @@ class RequestEditor(QWidget):
             self.body_mode_combo.setCurrentText(request.body.mode.value)
             self.body_editor.setPlainText(request.body.content)
             self._set_headers(request.headers)
+            self.query_params_table.load_entries(request.query_params)
+            self.path_params_table.load_entries(request.path_params)
+            self._set_settings(request.settings)
             self._set_auth(request.auth)
             self._on_body_mode_changed(request.body.mode.value)
         finally:
             self._loading = False
 
     def to_request(self, name: str) -> HttpRequest:
-        headers = self._collect_headers()
         mode = BodyMode(self.body_mode_combo.currentText())
         return HttpRequest(
             name=name,
             method=self.method_combo.currentText(),
             url=self.url_input.text().strip(),
-            headers=headers,
+            headers=self.headers_table.collect_entries(),
+            query_params=self.query_params_table.collect_entries(),
+            path_params=self.path_params_table.collect_entries(),
             body={"mode": mode, "content": self.body_editor.toPlainText()},
             auth=self._collect_auth(),
+            settings=self._collect_settings(),
         )
+
+    def _on_url_changed(self, _text: str) -> None:
+        if not self._loading:
+            self._sync_path_params_from_url()
+            self._emit_changed()
+
+    def _sync_path_params_from_url(self) -> None:
+        names = extract_path_param_names(self.url_input.text())
+        existing = {entry.name: entry for entry in self.path_params_table.collect_entries()}
+        entries = [
+            KeyValueEntry(
+                name=name,
+                value=existing[name].value if name in existing else "",
+                enabled=existing[name].enabled if name in existing else True,
+            )
+            for name in names
+        ]
+        self.path_params_table.load_entries(entries)
 
     def _emit_changed(self, *_args: object) -> None:
         if not self._loading:
@@ -230,40 +297,19 @@ class RequestEditor(QWidget):
             key_in=key_in,
         )
 
-    def _set_headers(self, headers: dict[str, str]) -> None:
-        self.headers_table.blockSignals(True)
-        self.headers_table.setRowCount(0)
-        for key, value in headers.items():
-            self._append_header_row(key, value)
-        if self.headers_table.rowCount() == 0:
-            self._append_header_row("", "")
-        self.headers_table.blockSignals(False)
+    def _set_headers(self, headers: list[KeyValueEntry]) -> None:
+        self.headers_table.load_entries(headers)
 
-    def _collect_headers(self) -> dict[str, str]:
-        headers: dict[str, str] = {}
-        for row in range(self.headers_table.rowCount()):
-            key_item = self.headers_table.item(row, 0)
-            value_item = self.headers_table.item(row, 1)
-            key = (key_item.text() if key_item else "").strip()
-            value = value_item.text() if value_item else ""
-            if key:
-                headers[key] = value
-        return headers
+    def _set_settings(self, settings: HttpRequestSettings) -> None:
+        self.follow_redirects_check.setChecked(settings.follow_redirects)
+        self.max_redirects_spin.setValue(settings.max_redirects)
+        self.timeout_spin.setValue(settings.timeout_ms)
+        self.encode_url_check.setChecked(settings.encode_url)
 
-    def _append_header_row(self, key: str, value: str) -> None:
-        row = self.headers_table.rowCount()
-        self.headers_table.insertRow(row)
-        self.headers_table.setItem(row, 0, QTableWidgetItem(key))
-        self.headers_table.setItem(row, 1, QTableWidgetItem(value))
-
-    def _add_header_row(self) -> None:
-        self._append_header_row("", "")
-        self._emit_changed()
-
-    def _remove_header_row(self) -> None:
-        row = self.headers_table.currentRow()
-        if row >= 0:
-            self.headers_table.removeRow(row)
-        if self.headers_table.rowCount() == 0:
-            self._append_header_row("", "")
-        self._emit_changed()
+    def _collect_settings(self) -> HttpRequestSettings:
+        return HttpRequestSettings(
+            follow_redirects=self.follow_redirects_check.isChecked(),
+            max_redirects=self.max_redirects_spin.value(),
+            timeout_ms=self.timeout_spin.value(),
+            encode_url=self.encode_url_check.isChecked(),
+        )
