@@ -14,11 +14,12 @@ Cross-platform desktop client for building and sending HTTP requests. Projects a
 |---|---|
 | On-disk requests | One JSON file per request under `requests/` |
 | HTTP methods | GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS |
-| Request body | none, JSON, or raw text |
+| Request body | none, JSON, text, form-urlencoded, multipart, file |
 | Headers | Key/value table with enable/disable per row |
 | Parameters | Path (`:id`) and query param tables |
 | Authentication | Bearer, Basic, API key (header or query) |
 | Request settings | Redirects, timeout, max redirects, URL encoding |
+| cURL | Copy as cURL and import from cURL |
 | Collections | Nested folders; add, rename, delete |
 | Stack | Python 3.11+, PySide6, httpx |
 

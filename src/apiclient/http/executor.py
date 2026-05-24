@@ -1,13 +1,13 @@
 import json
 import time
-from typing import Any
 
 import httpx
 
 from apiclient.http.auth import merge_headers, prepare_auth, validate_auth
+from apiclient.http.body import prepare_body
 from apiclient.http.url_builder import apply_query_to_url, merge_query_params, substitute_path_params
 from apiclient.models.compat import entries_to_dict
-from apiclient.models.request import BodyMode, HttpRequest, HttpResponse
+from apiclient.models.request import HttpRequest, HttpResponse
 
 
 def format_body_text(content: str, content_type: str | None) -> str:
@@ -40,20 +40,15 @@ class HttpExecutor:
         params = merge_query_params(request.query_params, prepared.params or None)
         url = substitute_path_params(request.url.strip(), entries_to_dict(request.path_params))
         url, httpx_params = apply_query_to_url(url, params, encode=settings.encode_url)
-        content: str | None = None
-        json_body: Any | None = None
 
-        if request.body.mode == BodyMode.JSON and request.body.content.strip():
-            try:
-                json_body = json.loads(request.body.content)
-            except json.JSONDecodeError as exc:
-                return HttpResponse(
-                    status_code=0,
-                    reason="Invalid JSON body",
-                    error=f"Request body is not valid JSON: {exc}",
-                )
-        elif request.body.mode == BodyMode.TEXT and request.body.content:
-            content = request.body.content
+        prepared_body = prepare_body(request.body)
+        if prepared_body.error:
+            return HttpResponse(
+                status_code=0,
+                reason="Invalid body",
+                error=prepared_body.error,
+            )
+        headers.update(prepared_body.extra_headers)
 
         started = time.perf_counter()
         try:
@@ -68,8 +63,10 @@ class HttpExecutor:
                     headers=headers,
                     params=httpx_params,
                     auth=prepared.httpx_auth,
-                    json=json_body,
-                    content=content,
+                    json=prepared_body.json_body,
+                    content=prepared_body.content,
+                    data=prepared_body.data,
+                    files=prepared_body.files,
                 )
         except httpx.HTTPError as exc:
             elapsed_ms = (time.perf_counter() - started) * 1000
