@@ -4,12 +4,6 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-class BodyMode(StrEnum):
-    NONE = "none"
-    JSON = "json"
-    TEXT = "text"
-
-
 class KeyValueEntry(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -18,11 +12,34 @@ class KeyValueEntry(BaseModel):
     enabled: bool = True
 
 
+class BodyMode(StrEnum):
+    NONE = "none"
+    JSON = "json"
+    TEXT = "text"
+    FORM_URLENCODED = "form-urlencoded"
+    MULTIPART = "multipart"
+    FILE = "file"
+
+
+class FormFieldKind(StrEnum):
+    TEXT = "text"
+    FILE = "file"
+
+
+class FormFieldEntry(KeyValueEntry):
+    kind: FormFieldKind = FormFieldKind.TEXT
+    file_path: str = ""
+
+
 class HttpBody(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     mode: BodyMode = BodyMode.NONE
     content: str = ""
+    form_fields: list[KeyValueEntry] = Field(default_factory=list)
+    multipart_fields: list[FormFieldEntry] = Field(default_factory=list)
+    file_path: str = ""
+    content_type: str = ""
 
 
 class AuthType(StrEnum):
