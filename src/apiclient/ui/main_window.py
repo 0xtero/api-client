@@ -3,12 +3,16 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
 from PySide6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QDialogButtonBox,
     QFileDialog,
     QHBoxLayout,
     QInputDialog,
     QLabel,
     QMainWindow,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QSplitter,
     QStatusBar,
@@ -18,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from apiclient.http.auth import validate_auth
+from apiclient.http.curl import curl_to_request, request_to_curl
 from apiclient.http.url_builder import validate_path_params
 from apiclient.models.project import FolderItem, RequestRef
 from apiclient.models.request import HttpResponse
@@ -94,6 +99,11 @@ class MainWindow(QMainWindow):
         file_menu.addAction(self.open_project_action)
         file_menu.addAction(self.save_project_action)
         file_menu.addSeparator()
+        self.copy_curl_action = QAction("Copy as c&URL", self)
+        self.import_curl_action = QAction("Import from c&URL…", self)
+        file_menu.addAction(self.copy_curl_action)
+        file_menu.addAction(self.import_curl_action)
+        file_menu.addSeparator()
         file_menu.addAction(self.exit_action)
 
         collection_menu = self.menuBar().addMenu("&Collection")
@@ -118,6 +128,8 @@ class MainWindow(QMainWindow):
         self.new_project_action.triggered.connect(self.new_project)
         self.open_project_action.triggered.connect(self.open_project)
         self.save_project_action.triggered.connect(self.save_project)
+        self.copy_curl_action.triggered.connect(self.copy_as_curl)
+        self.import_curl_action.triggered.connect(self.import_from_curl)
         self.exit_action.triggered.connect(self.close)
         self.add_folder_action.triggered.connect(self.add_folder)
         self.add_request_action.triggered.connect(self.add_request)
@@ -276,6 +288,43 @@ class MainWindow(QMainWindow):
         self.sidebar.load_session(self._session)
         self.response_viewer.clear()
         self.statusBar().showMessage("Item deleted", 2000)
+
+    def copy_as_curl(self) -> None:
+        request = self.request_editor.to_request(self._current_request_name())
+        if not request.url.strip():
+            QMessageBox.warning(self, "Copy as cURL", "URL is required.")
+            return
+        command = request_to_curl(request)
+        QApplication.clipboard().setText(command)
+        self.statusBar().showMessage("cURL command copied to clipboard", 3000)
+
+    def import_from_curl(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Import from cURL")
+        editor = QPlainTextEdit()
+        editor.setPlaceholderText("Paste cURL command")
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(editor)
+        layout.addWidget(buttons)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        command = editor.toPlainText().strip()
+        if not command:
+            return
+        try:
+            request = curl_to_request(command)
+        except ValueError as exc:
+            QMessageBox.critical(self, "Import from cURL", str(exc))
+            return
+        self.request_editor.load_request(request)
+        self._dirty = True
+        self._update_actions()
+        self.statusBar().showMessage("Imported request from cURL", 3000)
 
     def send_request(self) -> None:
         if self._runner.is_running:
