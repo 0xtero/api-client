@@ -6,6 +6,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
+    QPushButton,
     QSpinBox,
     QStackedWidget,
     QTabWidget,
@@ -13,14 +15,17 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from apiclient.http.oauth import fetch_oauth_token
 from apiclient.http.url_builder import extract_path_param_names
 from apiclient.models.request import (
     ApiKeyIn,
     AuthType,
+    DEFAULT_OAUTH_TOKEN_CONTENT_TYPE,
     HttpAuth,
     HttpRequest,
     HttpRequestSettings,
     KeyValueEntry,
+    OAuthGrantType,
 )
 from apiclient.ui.body_editor import BodyEditor
 from apiclient.ui.key_value_table import KeyValueTableWidget
@@ -31,15 +36,44 @@ AUTH_TYPES = [
     ("Bearer token", AuthType.BEARER),
     ("Basic auth", AuthType.BASIC),
     ("API key", AuthType.API_KEY),
+    ("OAuth 2.0", AuthType.OAUTH),
 ]
 API_KEY_LOCATIONS = [
     ("Header", ApiKeyIn.HEADER),
     ("Query param", ApiKeyIn.QUERY),
 ]
+OAUTH_GRANT_TYPES = [
+    ("Client credentials", OAuthGrantType.CLIENT_CREDENTIALS),
+    ("Password", OAuthGrantType.PASSWORD),
+    ("Authorization code", OAuthGrantType.AUTHORIZATION_CODE),
+]
+OAUTH_TOKEN_CONTENT_TYPES = [
+    "application/x-www-form-urlencoded",
+    "application/json",
+]
+
+
+def upsert_header(
+    entries: list[KeyValueEntry],
+    name: str,
+    value: str,
+) -> list[KeyValueEntry]:
+    updated = False
+    result: list[KeyValueEntry] = []
+    for entry in entries:
+        if entry.name.lower() == name.lower():
+            result.append(KeyValueEntry(name=name, value=value, enabled=True))
+            updated = True
+        else:
+            result.append(entry)
+    if not updated:
+        result.append(KeyValueEntry(name=name, value=value, enabled=True))
+    return result
 
 
 class RequestEditor(QWidget):
     changed = Signal()
+    oauth_test_finished = Signal(object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -99,11 +133,52 @@ class RequestEditor(QWidget):
         api_key_widget = QWidget()
         api_key_widget.setLayout(api_key_form)
 
+        self.oauth_idp_input = QLineEdit()
+        self.oauth_idp_input.setPlaceholderText("https://idp.example.com/oauth/token")
+        self.oauth_client_id_input = QLineEdit()
+        self.oauth_client_id_input.setPlaceholderText("Client ID")
+        self.oauth_client_secret_input = QLineEdit()
+        self.oauth_client_secret_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.oauth_client_secret_input.setPlaceholderText("Client secret")
+        self.oauth_grant_type_combo = QComboBox()
+        for label, _grant_type in OAUTH_GRANT_TYPES:
+            self.oauth_grant_type_combo.addItem(label)
+        self.oauth_scope_input = QLineEdit()
+        self.oauth_scope_input.setPlaceholderText("Optional scope")
+        self.oauth_content_type_combo = QComboBox()
+        self.oauth_content_type_combo.addItems(OAUTH_TOKEN_CONTENT_TYPES)
+        self.oauth_username_input = QLineEdit()
+        self.oauth_username_input.setPlaceholderText("Username")
+        self.oauth_password_input = QLineEdit()
+        self.oauth_password_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.oauth_password_input.setPlaceholderText("Password")
+        self.oauth_username_label = QLabel("Username")
+        self.oauth_password_label = QLabel("Password")
+        self.oauth_access_token_input = QLineEdit()
+        self.oauth_access_token_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.oauth_access_token_input.setPlaceholderText("Bearer access token")
+        self.oauth_test_auth_button = QPushButton("Test Auth")
+
+        oauth_form = QFormLayout()
+        oauth_form.addRow("IDP endpoint", self.oauth_idp_input)
+        oauth_form.addRow("Client ID", self.oauth_client_id_input)
+        oauth_form.addRow("Client secret", self.oauth_client_secret_input)
+        oauth_form.addRow("Grant type", self.oauth_grant_type_combo)
+        oauth_form.addRow("Scope", self.oauth_scope_input)
+        oauth_form.addRow("Content-Type", self.oauth_content_type_combo)
+        oauth_form.addRow(self.oauth_username_label, self.oauth_username_input)
+        oauth_form.addRow(self.oauth_password_label, self.oauth_password_input)
+        oauth_form.addRow("Access token", self.oauth_access_token_input)
+        oauth_form.addRow("", self.oauth_test_auth_button)
+        oauth_widget = QWidget()
+        oauth_widget.setLayout(oauth_form)
+
         self.auth_stack = QStackedWidget()
         self.auth_stack.addWidget(self.auth_none_label)
         self.auth_stack.addWidget(bearer_widget)
         self.auth_stack.addWidget(basic_widget)
         self.auth_stack.addWidget(api_key_widget)
+        self.auth_stack.addWidget(oauth_widget)
 
         auth_layout = QVBoxLayout()
         auth_layout.addWidget(self.auth_type_combo)
@@ -186,6 +261,16 @@ class RequestEditor(QWidget):
         self.api_key_name_input.textChanged.connect(self._emit_changed)
         self.api_key_value_input.textChanged.connect(self._emit_changed)
         self.api_key_in_combo.currentIndexChanged.connect(self._emit_changed)
+        self.oauth_idp_input.textChanged.connect(self._emit_changed)
+        self.oauth_client_id_input.textChanged.connect(self._emit_changed)
+        self.oauth_client_secret_input.textChanged.connect(self._emit_changed)
+        self.oauth_grant_type_combo.currentIndexChanged.connect(self._on_oauth_grant_type_changed)
+        self.oauth_scope_input.textChanged.connect(self._emit_changed)
+        self.oauth_content_type_combo.currentTextChanged.connect(self._emit_changed)
+        self.oauth_username_input.textChanged.connect(self._emit_changed)
+        self.oauth_password_input.textChanged.connect(self._emit_changed)
+        self.oauth_access_token_input.textChanged.connect(self._emit_changed)
+        self.oauth_test_auth_button.clicked.connect(self._test_oauth_auth)
         self.body_editor.changed.connect(self._emit_changed)
         self.headers_table.changed.connect(self._emit_changed)
         self.query_params_table.changed.connect(self._emit_changed)
@@ -196,6 +281,7 @@ class RequestEditor(QWidget):
         self.encode_url_check.toggled.connect(self._emit_changed)
 
         self._on_auth_type_changed(self.auth_type_combo.currentIndex())
+        self._on_oauth_grant_type_changed(self.oauth_grant_type_combo.currentIndex())
 
     def load_request(self, request: HttpRequest) -> None:
         self._loading = True
@@ -250,6 +336,15 @@ class RequestEditor(QWidget):
         self.auth_stack.setCurrentIndex(index)
         self._emit_changed()
 
+    def _on_oauth_grant_type_changed(self, index: int) -> None:
+        grant_type = OAUTH_GRANT_TYPES[index][1]
+        show_password_fields = grant_type == OAuthGrantType.PASSWORD
+        self.oauth_username_label.setVisible(show_password_fields)
+        self.oauth_username_input.setVisible(show_password_fields)
+        self.oauth_password_label.setVisible(show_password_fields)
+        self.oauth_password_input.setVisible(show_password_fields)
+        self._emit_changed()
+
     def _set_auth(self, auth: HttpAuth) -> None:
         type_index = next(
             (i for i, (_, auth_type) in enumerate(AUTH_TYPES) if auth_type == auth.type),
@@ -266,19 +361,79 @@ class RequestEditor(QWidget):
             0,
         )
         self.api_key_in_combo.setCurrentIndex(key_in_index)
+        self.oauth_idp_input.setText(auth.idp_endpoint)
+        self.oauth_client_id_input.setText(auth.client_id)
+        self.oauth_client_secret_input.setText(auth.client_secret)
+        grant_type_index = next(
+            (
+                i
+                for i, (_, grant_type) in enumerate(OAUTH_GRANT_TYPES)
+                if grant_type == auth.grant_type
+            ),
+            0,
+        )
+        self.oauth_grant_type_combo.setCurrentIndex(grant_type_index)
+        self.oauth_scope_input.setText(auth.scope)
+        content_type_index = self.oauth_content_type_combo.findText(auth.token_content_type)
+        self.oauth_content_type_combo.setCurrentIndex(
+            content_type_index if content_type_index >= 0 else 0
+        )
+        self.oauth_username_input.setText(auth.username)
+        self.oauth_password_input.setText(auth.password)
+        self.oauth_access_token_input.setText(auth.access_token)
+        self._on_oauth_grant_type_changed(grant_type_index)
         self.auth_stack.setCurrentIndex(type_index)
+
+    def _test_oauth_auth(self) -> None:
+        auth = self._collect_auth()
+        timeout = self.timeout_spin.value() / 1000
+        result = fetch_oauth_token(auth, timeout=timeout)
+        self.oauth_test_finished.emit(result.response)
+
+        if result.error:
+            self.oauth_access_token_input.clear()
+            self._emit_changed()
+            QMessageBox.critical(self, "Test Auth", result.error)
+            return
+
+        assert result.access_token is not None
+        self.oauth_access_token_input.setText(result.access_token)
+        self._set_authorization_bearer_header(result.access_token)
+        self._emit_changed()
+        QMessageBox.information(self, "Test Auth", "Access token obtained successfully.")
+
+    def _set_authorization_bearer_header(self, token: str) -> None:
+        entries = upsert_header(
+            self.headers_table.collect_entries(),
+            "Authorization",
+            f"Bearer {token}",
+        )
+        self.headers_table.load_entries(entries)
 
     def _collect_auth(self) -> HttpAuth:
         auth_type = AUTH_TYPES[self.auth_type_combo.currentIndex()][1]
         key_in = API_KEY_LOCATIONS[self.api_key_in_combo.currentIndex()][1]
+        grant_type = OAUTH_GRANT_TYPES[self.oauth_grant_type_combo.currentIndex()][1]
         return HttpAuth(
             type=auth_type,
             token=self.bearer_token_input.text(),
-            username=self.basic_username_input.text(),
-            password=self.basic_password_input.text(),
+            username=self.oauth_username_input.text()
+            if auth_type == AuthType.OAUTH
+            else self.basic_username_input.text(),
+            password=self.oauth_password_input.text()
+            if auth_type == AuthType.OAUTH
+            else self.basic_password_input.text(),
             key_name=self.api_key_name_input.text(),
             key_value=self.api_key_value_input.text(),
             key_in=key_in,
+            idp_endpoint=self.oauth_idp_input.text(),
+            client_id=self.oauth_client_id_input.text(),
+            client_secret=self.oauth_client_secret_input.text(),
+            grant_type=grant_type,
+            scope=self.oauth_scope_input.text(),
+            token_content_type=self.oauth_content_type_combo.currentText().strip()
+            or DEFAULT_OAUTH_TOKEN_CONTENT_TYPE,
+            access_token=self.oauth_access_token_input.text(),
         )
 
     def _set_headers(self, headers: list[KeyValueEntry]) -> None:

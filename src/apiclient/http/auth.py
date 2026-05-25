@@ -23,6 +23,9 @@ def validate_auth(auth: HttpAuth) -> str | None:
             return "API key name is required."
         if not auth.key_value.strip():
             return "API key value is required."
+    if auth.type == AuthType.OAUTH:
+        if not auth.access_token.strip():
+            return "OAuth access token is required. Use Test Auth to obtain a token."
     return None
 
 
@@ -47,6 +50,11 @@ def prepare_auth(auth: HttpAuth) -> PreparedAuth:
             )
         return PreparedAuth(
             headers={auth.key_name.strip(): auth.key_value.strip()},
+            params={},
+        )
+    if auth.type == AuthType.OAUTH:
+        return PreparedAuth(
+            headers={"Authorization": f"Bearer {auth.access_token.strip()}"},
             params={},
         )
     return PreparedAuth(headers={}, params={})

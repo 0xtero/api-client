@@ -1,12 +1,11 @@
-import json
-
-from apiclient.http.executor import HttpExecutor, format_body_text
+from apiclient.http.executor import HttpExecutor
+from apiclient.http.response_format import render_body_text
 from apiclient.models.request import AuthType, BodyMode, HttpAuth, HttpRequest, KeyValueEntry
 
 
 def test_format_body_text_json() -> None:
-    formatted = format_body_text('{"a":1}', "application/json")
-    assert formatted == json.dumps({"a": 1}, indent=2)
+    formatted = render_body_text('{"a":1}', "application/json")
+    assert formatted == '{\n  "a": 1\n}'
 
 
 def test_send_get_httpbin() -> None:

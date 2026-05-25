@@ -2,7 +2,8 @@ from dataclasses import dataclass
 from typing import Literal
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem
+from PySide6.QtGui import QAction
+from PySide6.QtWidgets import QMenu, QTreeWidget, QTreeWidgetItem
 
 from apiclient.models.project import CollectionItem, FolderItem, RequestRef
 from apiclient.storage.project_storage import ProjectSession
@@ -19,6 +20,9 @@ class TreeSelection:
 
 class CollectionSidebar(QTreeWidget):
     selection_changed = Signal(object)
+    duplicate_requested = Signal(object)
+    rename_requested = Signal(object)
+    delete_requested = Signal(object)
 
     ROLE_KIND = Qt.ItemDataRole.UserRole
     ROLE_ITEM = Qt.ItemDataRole.UserRole + 1
@@ -29,14 +33,23 @@ class CollectionSidebar(QTreeWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setHeaderHidden(True)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._show_context_menu)
         self.currentItemChanged.connect(self._on_current_changed)
 
-    def load_session(self, session: ProjectSession) -> None:
+    def load_session(self, session: ProjectSession | None) -> None:
         self.blockSignals(True)
         self.clear()
-        for index, item in enumerate(session.collection.items):
-            self._append_item(None, session.collection.items, index, item)
-        self.expandAll()
+        if session is not None:
+            for index, item in enumerate(session.collection.items):
+                self._append_item(None, session.collection.items, index, item)
+            self.expandAll()
+        self.blockSignals(False)
+
+    def clear_selection(self) -> None:
+        self.blockSignals(True)
+        self.clearSelection()
+        self.setCurrentItem(None)
         self.blockSignals(False)
 
     def current_selection(self) -> TreeSelection:
@@ -67,12 +80,77 @@ class CollectionSidebar(QTreeWidget):
             )
         return TreeSelection(kind="none")
 
+    def selection_for_item(self, tree_item: QTreeWidgetItem) -> TreeSelection:
+        kind = tree_item.data(0, self.ROLE_KIND)
+        collection_item = tree_item.data(0, self.ROLE_ITEM)
+        parent_items = tree_item.data(0, self.ROLE_PARENT)
+        index = tree_item.data(0, self.ROLE_INDEX)
+        file_path = tree_item.data(0, self.ROLE_FILE)
+
+        if kind == "request":
+            return TreeSelection(
+                kind="request",
+                item=collection_item,
+                parent_items=parent_items,
+                index=index,
+                file_path=file_path,
+            )
+        if kind == "folder":
+            return TreeSelection(
+                kind="folder",
+                item=collection_item,
+                parent_items=parent_items,
+                index=index,
+            )
+        return TreeSelection(kind="none")
+
     def select_request_by_file(self, file_path: str) -> None:
         iterator = self._walk_items(self.invisibleRootItem())
         for tree_item in iterator:
             if tree_item.data(0, self.ROLE_KIND) == "request" and tree_item.data(0, self.ROLE_FILE) == file_path:
                 self.setCurrentItem(tree_item)
                 return
+
+    def _show_context_menu(self, position) -> None:
+        tree_item = self.itemAt(position)
+        if tree_item is None:
+            return
+
+        self.setCurrentItem(tree_item)
+        selection = self.selection_for_item(tree_item)
+        if selection.kind == "none":
+            return
+
+        menu = QMenu(self)
+        if selection.kind == "request":
+            duplicate_action = QAction("Duplicate", self)
+            duplicate_action.triggered.connect(self._emit_duplicate_requested)
+            menu.addAction(duplicate_action)
+
+        rename_action = QAction("Rename", self)
+        rename_action.triggered.connect(self._emit_rename_requested)
+        menu.addAction(rename_action)
+
+        delete_action = QAction("Delete", self)
+        delete_action.triggered.connect(self._emit_delete_requested)
+        menu.addAction(delete_action)
+
+        menu.exec(self.viewport().mapToGlobal(position))
+
+    def _emit_duplicate_requested(self) -> None:
+        selection = self.current_selection()
+        if selection.kind == "request":
+            self.duplicate_requested.emit(selection)
+
+    def _emit_rename_requested(self) -> None:
+        selection = self.current_selection()
+        if selection.kind in {"folder", "request"}:
+            self.rename_requested.emit(selection)
+
+    def _emit_delete_requested(self) -> None:
+        selection = self.current_selection()
+        if selection.kind in {"folder", "request"}:
+            self.delete_requested.emit(selection)
 
     def _append_item(
         self,

@@ -29,6 +29,7 @@ class HttpRequestRunner:
     def __init__(self) -> None:
         self._thread: QThread | None = None
         self._worker: HttpWorker | None = None
+        self._running = False
 
     def start(
         self,
@@ -37,31 +38,51 @@ class HttpRequestRunner:
         on_failed: Callable[[str], None],
     ) -> None:
         self.cancel()
+        self._running = True
 
         thread = QThread()
         worker = HttpWorker(request)
         worker.moveToThread(thread)
 
         thread.started.connect(worker.run)
+        worker.finished.connect(self._mark_idle)
+        worker.failed.connect(self._mark_idle)
         worker.finished.connect(on_finished)
         worker.finished.connect(thread.quit)
         worker.failed.connect(on_failed)
         worker.failed.connect(thread.quit)
         worker.finished.connect(worker.deleteLater)
         worker.failed.connect(worker.deleteLater)
+        thread.finished.connect(self._clear_thread)
         thread.finished.connect(thread.deleteLater)
 
         self._thread = thread
         self._worker = worker
         thread.start()
 
+    def _mark_idle(self) -> None:
+        self._running = False
+
+    def _clear_thread(self) -> None:
+        self._running = False
+        self._thread = None
+        self._worker = None
+
     def cancel(self) -> None:
-        if self._thread and self._thread.isRunning():
-            self._thread.quit()
-            self._thread.wait(2000)
+        thread = self._thread
+        self._running = False
+        if thread is None:
+            self._worker = None
+            return
+        try:
+            if thread.isRunning():
+                thread.quit()
+                thread.wait(2000)
+        except RuntimeError:
+            pass
         self._thread = None
         self._worker = None
 
     @property
     def is_running(self) -> bool:
-        return self._thread is not None and self._thread.isRunning()
+        return self._running

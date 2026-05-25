@@ -47,6 +47,16 @@ class AuthType(StrEnum):
     BEARER = "bearer"
     BASIC = "basic"
     API_KEY = "api_key"
+    OAUTH = "oauth"
+
+
+class OAuthGrantType(StrEnum):
+    CLIENT_CREDENTIALS = "client_credentials"
+    PASSWORD = "password"
+    AUTHORIZATION_CODE = "authorization_code"
+
+
+DEFAULT_OAUTH_TOKEN_CONTENT_TYPE = "application/x-www-form-urlencoded"
 
 
 class ApiKeyIn(StrEnum):
@@ -64,6 +74,13 @@ class HttpAuth(BaseModel):
     key_name: str = ""
     key_value: str = ""
     key_in: ApiKeyIn = ApiKeyIn.HEADER
+    idp_endpoint: str = ""
+    client_id: str = ""
+    client_secret: str = ""
+    grant_type: OAuthGrantType = OAuthGrantType.CLIENT_CREDENTIALS
+    scope: str = ""
+    token_content_type: str = DEFAULT_OAUTH_TOKEN_CONTENT_TYPE
+    access_token: str = ""
 
 
 class HttpRequestSettings(BaseModel):
@@ -103,6 +120,7 @@ class HttpResponse(BaseModel):
     reason: str = ""
     headers: dict[str, str] = Field(default_factory=dict)
     body: str = ""
+    content_type: str | None = None
     elapsed_ms: float = 0.0
     error: str | None = None
 

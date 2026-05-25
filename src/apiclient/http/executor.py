@@ -1,4 +1,3 @@
-import json
 import time
 
 import httpx
@@ -8,16 +7,6 @@ from apiclient.http.body import prepare_body
 from apiclient.http.url_builder import apply_query_to_url, merge_query_params, substitute_path_params
 from apiclient.models.compat import entries_to_dict
 from apiclient.models.request import HttpRequest, HttpResponse
-
-
-def format_body_text(content: str, content_type: str | None) -> str:
-    if content_type and "json" in content_type.lower():
-        try:
-            parsed = json.loads(content)
-            return json.dumps(parsed, indent=2, ensure_ascii=False)
-        except (json.JSONDecodeError, TypeError):
-            pass
-    return content
 
 
 class HttpExecutor:
@@ -80,12 +69,12 @@ class HttpExecutor:
         elapsed_ms = (time.perf_counter() - started) * 1000
         text = response.text
         content_type = response.headers.get("content-type")
-        formatted = format_body_text(text, content_type)
 
         return HttpResponse(
             status_code=response.status_code,
             reason=response.reason_phrase or "",
             headers=dict(response.headers),
-            body=formatted,
+            body=text,
+            content_type=content_type,
             elapsed_ms=elapsed_ms,
         )

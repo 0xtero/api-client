@@ -57,6 +57,11 @@ def request_to_curl(request: HttpRequest) -> str:
         key = auth.key_name.strip()
         if key.lower() not in header_names_lower:
             parts.extend(["-H", _shell_quote(f"{key}: {auth.key_value}")])
+    elif auth.type == AuthType.OAUTH and "authorization" not in header_names_lower:
+        if auth.access_token.strip():
+            parts.extend(
+                ["-H", _shell_quote(f"Authorization: Bearer {auth.access_token.strip()}")]
+            )
 
     body = request.body
     if body.mode == BodyMode.JSON and body.content.strip():
